@@ -43,7 +43,8 @@ int main(int argc, char **argv) {
 
   memset(&queue, 0, sizeof(queue));
   pthread_mutex_init(&queue.lock, NULL);
-
+  // problem 5 initialize g_num_prod_lock
+  pthread_mutex_init(&g_num_prod_lock, NULL);
   g_num_prod = 1; /* there will be 1 producer thread */
 
   /* Create producer and consumer threads */
@@ -55,11 +56,12 @@ int main(int argc, char **argv) {
   }
 
   printf("Producer thread started with thread id %lu\n", producer_thread);
-
+  // problem 1 cannot join a detached thread. 
+  /*
   result = pthread_detach(producer_thread);
   if (0 != result)
     fprintf(stderr, "Failed to detach producer thread: %s\n", strerror(result));
-
+  */
   result = pthread_create(&consumer_thread, NULL, consumer_routine, &queue);
   if (0 != result) {
     fprintf(stderr, "Failed to create consumer thread: %s\n", strerror(result));
@@ -73,7 +75,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Failed to join producer thread: %s\n", strerror(result));
     pthread_exit(NULL);
   }
-
   result = pthread_join(consumer_thread, &thread_return);
   if (0 != result) {
     fprintf(stderr, "Failed to join consumer thread: %s\n", strerror(result));
@@ -97,17 +98,14 @@ void *producer_routine(void *arg) {
   pthread_t consumer_thread;
   int result = 0;
   char c;
-
   result = pthread_create(&consumer_thread, NULL, consumer_routine, queue_p);
   if (0 != result) {
     fprintf(stderr, "Failed to create consumer thread: %s\n", strerror(result));
     exit(1);
   }
-
   result = pthread_detach(consumer_thread);
   if (0 != result)
     fprintf(stderr, "Failed to detach consumer thread: %s\n", strerror(result));
-
   for (c = 'a'; c <= 'z'; ++c) {
 
     /* Create a new node with the prev letter */
@@ -136,7 +134,10 @@ void *producer_routine(void *arg) {
   }
 
   /* Decrement the number of producer threads running, then return */
+  // problem 2 : modify global variable without lock
+  pthread_mutex_lock(&g_num_prod_lock);
   --g_num_prod;
+  pthread_mutex_unlock(&g_num_prod_lock);
   return (void*) 0;
 }
 
@@ -145,8 +146,8 @@ void *producer_routine(void *arg) {
 void *consumer_routine(void *arg) {
   queue_t *queue_p = arg;
   queue_node_t *prev_node_p = NULL;
-  long count = 0; /* number of nodes this thread printed */
-
+  // problem 3 : return value  is local and we need change it to heap space 
+  long* count = malloc(sizeof(long)); /* number of nodes this thread printed */
   printf("Consumer thread started with thread id %lu\n", pthread_self());
 
   /* terminate the loop only when there are no more items in the queue
@@ -173,12 +174,16 @@ void *consumer_routine(void *arg) {
       /* Print the character, and increment the character count */
       printf("%c", prev_node_p->c);
       free(prev_node_p);
-      ++count;
+      // problem 3 : since we change count to a pointer, here we need to use dereference
+      ++(*count);
     }
     else { /* Queue is empty, so let some other thread run */
       pthread_mutex_unlock(&queue_p->lock);
       sched_yield();
     }
+    // problem 4 : for each iteration, lock another time
+    pthread_mutex_lock(&queue_p->lock);
+    pthread_mutex_lock(&g_num_prod_lock);
   }
   pthread_mutex_unlock(&g_num_prod_lock);
   pthread_mutex_unlock(&queue_p->lock);
